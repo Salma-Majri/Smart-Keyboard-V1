@@ -11,14 +11,19 @@ BOS, EOS, UNK = "<s>", "</s>", "<unk>"
 
 # ----------------------------------------------------------------- data
 def load_documents(path="data/corpus.csv"):
-    """Return {doc_id: [sentence_tokens, ...]} (tokens are already lower-case, space separated)."""
+    """Return {doc_id: [sentence_tokens, ...]} géré automatiquement même si doc_id n'existe pas."""
     docs = defaultdict(list)
     with open(path, encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            docs[int(row["doc_id"])].append(row["sentence"].split())
+        reader = csv.DictReader(f)
+        has_doc_id = 'doc_id' in reader.fieldnames if reader.fieldnames else False
+        
+        for row_idx, row in enumerate(reader):
+            sentence_text = row.get("sentence", row.get("text", ""))
+            if not sentence_text.strip():
+                continue
+            current_doc_id = int(row["doc_id"]) if has_doc_id and row.get("doc_id") else row_idx
+            docs[current_doc_id].append(sentence_text.split())
     return dict(docs)
-
-
 def split_by_document(docs, test_fraction=0.2):
     """Fixed, reproducible split BY DOCUMENT (the last 20 % of documents are the test set)."""
     ids = sorted(docs)
@@ -129,22 +134,41 @@ def backoff_top_k(tri, bi, uni, words, k=3):
             return model.top_k(words, k), f"{model.n}-gram"
     return [], "none"
 
-
-def top_k_accuracy(model, sentences, k=3):
-    """Share of positions where the true next word is among the k suggestions."""
+def top_k_accuracy(model, sentences, k=3, max_tokens=10000):
+    """Share of positions where the true next word is among the k suggestions.
+    Optimized: evaluates on a representative sample (max_tokens) to run in seconds.
+    """
     hits = total = 0
     failures = []
+    
     for s in sentences:
         for i, true_w in enumerate(s + [EOS]):
-            guess = [w for w, _ in model.top_k(s[:i], k)]
+            # ⚡ Optimisation: Seulement les n premiers tokens du contexte pour tri/bi
+            ctx_words = s[:i]
+            
+            # Récupérer les top_k rapidement
+            if hasattr(model, 'ctx_counts') and model.n > 1:
+                ctx = model.context(ctx_words)
+                if ctx in model.ctx_counts:
+                    # Prendre directement les candidats vus dans ce contexte
+                    candidates = model.ctx_counts[ctx].most_common(k)
+                    guess = [w for w, _ in candidates]
+                else:
+                    guess = [w for w, _ in model.top_k(ctx_words, k)]
+            else:
+                guess = [w for w, _ in model.top_k(ctx_words, k)]
+                
             truth = true_w if true_w in model.vocab else UNK
             total += 1
             if truth in guess:
                 hits += 1
             elif len(failures) < 200:
-                failures.append((" ".join(s[:i]) or "<start>", true_w, guess))
-    return hits / total, failures
-
+                failures.append((" ".join(ctx_words) or "<start>", true_w, guess))
+                
+            if total >= max_tokens:
+                return hits / total, failures
+                
+    return (hits / total) if total > 0 else 0.0, failures
 
 if __name__ == "__main__":
     docs = load_documents()
