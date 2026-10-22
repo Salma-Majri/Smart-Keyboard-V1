@@ -1,7 +1,7 @@
 # ⌨️ Smart Keyboard V1
 
 A next-word prediction keyboard built with statistical N-gram language models, featuring Add-k smoothing and back-off strategies, wrapped in a modern Streamlit web interface.
-
+## live demo https://smart-keyboard-v1-majrisalma.streamlit.app/
 ## 👤 Author
 * **Salma Majri** 
 * **Program:** Master SDIA-2 
